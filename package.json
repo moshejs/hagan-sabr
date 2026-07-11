@@ -1,0 +1,55 @@
+{
+  "name": "hagan-sabr",
+  "version": "1.0.0",
+  "description": "The SABR stochastic-volatility model — Hagan (2002) lognormal & normal implied-vol expansions, the Obłój correction, and (alpha, rho, nu) smile calibration. Matches QuantLib. Zero dependencies.",
+  "keywords": [
+    "sabr",
+    "hagan",
+    "implied-volatility",
+    "volatility-smile",
+    "stochastic-volatility",
+    "swaption",
+    "options",
+    "quant",
+    "quantitative-finance",
+    "derivatives",
+    "finance"
+  ],
+  "homepage": "https://moshemalka.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moshejs/hagan-sabr.git"
+  },
+  "bugs": "https://github.com/moshejs/hagan-sabr/issues",
+  "author": "Moshe Malka <hello@moshemalka.com> (https://moshemalka.com)",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
