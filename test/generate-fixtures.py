@@ -1,63 +1,75 @@
 #!/usr/bin/env python3
 """Reference fixtures for the SABR implied-vol formulas.
 
-- LOGNORMAL fixtures come from QuantLib's `sabrVolatility` (the authoritative
-  Hagan 2002 Black-vol implementation) — an EXTERNAL gold standard.
-- NORMAL and OBLOJ fixtures come from an independent Python transcription of
-  the Hagan (2002) formulas below, guarding against TS transcription bugs.
+- lognormal: QuantLib `sabrVolatility` (Hagan 2002 Black vol).
+- normal:    QuantLib `shiftedSabrVolatility(..., shift=0, VolatilityType.Normal)`
+             (Hagan 2002 normal vol, same simplified form as `normalVol`).
+- shifted:   QuantLib `shiftedSabrVolatility` with a positive shift and negative
+             forwards/strikes, in both ShiftedLognormal and Normal flavours.
+- obloj:     a 50-digit mpmath transcription of Oblój (2008), "Fine-tune your
+             smile: correction to Hagan et al.", eq. for sigma_0 incl. the nu=0
+             limit (QuantLib has no Oblój variant).
+- near_atm:  50-digit mpmath values of the Hagan lognormal / normal and Oblój
+             formulas for strikes within 1e-13..1e-5 of the forward, where
+             double-precision evaluation of x(z) cancels catastrophically.
+             (QuantLib is not used here: its own two-term series cutover is off
+             by up to ~3e-8 relative in this region.)
 
+Usage: python -I test/generate-fixtures.py   (needs QuantLib, mpmath)
 Writes test/fixtures.json.
 """
 import json
-import math
 
+import mpmath as mp
 import QuantLib as ql
 
-
-def z_over_x(z, rho):
-    if abs(z) < 1e-12:
-        return 1 - rho * z / 2 + (2 - 3 * rho * rho) * z * z / 12
-    x = math.log((math.sqrt(1 - 2 * rho * z + z * z) + z - rho) / (1 - rho))
-    return z / x
+mp.mp.dps = 50
 
 
-def normal_vol(F, K, T, alpha, beta, rho, nu):
-    omb = 1 - beta
-    FKpow = (F * K) ** omb
-    FKhalf = (F * K) ** (omb / 2)
-    c1 = -beta * (2 - beta) * alpha * alpha / (24 * FKpow)
-    c2 = rho * beta * nu * alpha / (4 * FKhalf)
-    c3 = (2 - 3 * rho * rho) * nu * nu / 24
-    tf = 1 + (c1 + c2 + c3) * T
-    level = alpha * (F * K) ** (beta / 2)
-    if abs(F - K) < 1e-12 * max(1, F):
-        return level * tf
-    logfk = math.log(F / K)
-    num = 1 + logfk**2 / 24 + logfk**4 / 1920
-    den = 1 + omb**2 * logfk**2 / 24 + omb**4 * logfk**4 / 1920
-    z = nu / alpha * FKhalf * logfk
-    return level * (num / den) * z_over_x(z, rho) * tf
+def xz(z, rho):
+    return mp.log((mp.sqrt(1 - 2 * rho * z + z * z) + z - rho) / (1 - rho))
 
 
-def obloj_vol(F, K, T, alpha, beta, rho, nu):
-    omb = 1 - beta
-    logfk = math.log(F / K)
-    FKbeta = (F * K) ** (omb / 2)
-    t1 = omb**2 * alpha * alpha / (24 * FKbeta * FKbeta)
-    t2 = rho * beta * nu * alpha / (4 * FKbeta)
-    t3 = (2 - 3 * rho * rho) * nu * nu / 24
-    tf = 1 + (t1 + t2 + t3) * T
-    if abs(logfk) < 1e-12:
-        leading = alpha / F**omb
-    elif omb < 1e-8:
-        z = nu / alpha * logfk
-        xz = math.log((math.sqrt(1 - 2 * rho * z + z * z) + z - rho) / (1 - rho))
-        leading = nu * logfk / xz
+def zox(z, rho):
+    return mp.mpf(1) if z == 0 else z / xz(z, rho)
+
+
+def time_factor_ln(F, K, T, a, b, r, n):
+    omb = 1 - b
+    fk = (F * K) ** (omb / 2)
+    return 1 + (omb**2 * a * a / (24 * fk * fk) + r * b * n * a / (4 * fk) + (2 - 3 * r * r) * n * n / 24) * T
+
+
+def hagan_ln(F, K, T, a, b, r, n):
+    F, K, T, a, b, r, n = map(mp.mpf, (F, K, T, a, b, r, n))
+    omb = 1 - b
+    L = mp.log(F / K)
+    fk = (F * K) ** (omb / 2)
+    den = fk * (1 + omb**2 * L**2 / 24 + omb**4 * L**4 / 1920)
+    return a / den * zox(n / a * fk * L, r) * time_factor_ln(F, K, T, a, b, r, n)
+
+
+def hagan_n(F, K, T, a, b, r, n):
+    F, K, T, a, b, r, n = map(mp.mpf, (F, K, T, a, b, r, n))
+    omb = 1 - b
+    L = mp.log(F / K)
+    tf = 1 + (-b * (2 - b) * a * a / (24 * (F * K) ** omb) + r * b * n * a / (4 * (F * K) ** (omb / 2))
+              + (2 - 3 * r * r) * n * n / 24) * T
+    num = 1 + L**2 / 24 + L**4 / 1920
+    den = 1 + omb**2 * L**2 / 24 + omb**4 * L**4 / 1920
+    return a * (F * K) ** (b / 2) * num / den * zox(n / a * (F * K) ** (omb / 2) * L, r) * tf
+
+
+def obloj(F, K, T, a, b, r, n):
+    F, K, T, a, b, r, n = map(mp.mpf, (F, K, T, a, b, r, n))
+    omb = 1 - b
+    L = mp.log(F / K)
+    if F == K:
+        lead = a / F**omb
     else:
-        z = nu / alpha * (F**omb - K**omb) / omb
-        xz = math.log((math.sqrt(1 - 2 * rho * z + z * z) + z - rho) / (1 - rho))
-        leading = nu * logfk / xz
-    return leading * tf
+        q = L if omb == 0 else (F**omb - K**omb) / omb  # int_K^F x^-beta dx
+        lead = a * L / q if n == 0 else n * L / xz(n * q / a, r)
+    return lead * time_factor_ln(F, K, T, a, b, r, n)
 
 
 PARAM_SETS = [
@@ -66,27 +78,59 @@ PARAM_SETS = [
     dict(alpha=0.25, beta=1.0, rho=-0.5, nu=0.6),
     dict(alpha=0.15, beta=0.7, rho=0.0, nu=0.3),
     dict(alpha=0.4, beta=0.3, rho=-0.7, nu=0.8),
+    dict(alpha=0.1, beta=0.5, rho=0.4, nu=0.0),  # nu = 0: pure CEV
 ]
 FORWARDS = [100.0, 0.02, 50.0]
 T_LIST = [0.25, 1.0, 5.0]
 
-lognormal, normal, obloj = [], [], []
+out = {"lognormal": [], "normal": [], "shifted": [], "obloj": [], "near_atm": []}
 for p in PARAM_SETS:
+    a, b, r, n = p["alpha"], p["beta"], p["rho"], p["nu"]
     for F in FORWARDS:
         for T in T_LIST:
-            for moneyness in [0.6, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5]:
-                K = F * moneyness
-                # QuantLib arg order: sabrVolatility(strike, forward, expiry, alpha, beta, nu, rho)
-                try:
-                    lv = ql.sabrVolatility(K, F, T, p["alpha"], p["beta"], p["nu"], p["rho"])
-                except RuntimeError:
-                    continue
+            for m in [0.6, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5]:
+                K = F * m
                 row = dict(F=F, K=K, T=T, **p)
-                lognormal.append({**row, "vol": lv})
-                normal.append({**row, "vol": normal_vol(F, K, T, p["alpha"], p["beta"], p["rho"], p["nu"])})
-                obloj.append({**row, "vol": obloj_vol(F, K, T, p["alpha"], p["beta"], p["rho"], p["nu"])})
+                # QuantLib arg order: (strike, forward, expiry, alpha, beta, nu, rho)
+                out["lognormal"].append({**row, "vol": ql.sabrVolatility(K, F, T, a, b, n, r)})
+                out["normal"].append({**row, "vol": ql.shiftedSabrVolatility(K, F, T, a, b, n, r, 0.0, ql.Normal)})
+                out["obloj"].append({**row, "vol": float(obloj(F, K, T, a, b, r, n))})
 
+# Shifted SABR with negative forwards/strikes (EUR/JPY/CHF-style rates).
+for p in PARAM_SETS:
+    a, b, r, n = p["alpha"], p["beta"], p["rho"], p["nu"]
+    a = a * 0.02 ** (1 - b) / 100 ** (1 - b) * 5  # rescale alpha for rate-sized forwards
+    for shift in [0.01, 0.03]:
+        for F in [-0.005, 0.0, 0.004]:
+            for T in [0.5, 5.0]:
+                for K in [-0.0075, -0.004, -0.001, 0.0, 0.002, 0.006, 0.015]:
+                    if F + shift <= 0 or K + shift <= 0:
+                        continue
+                    row = dict(F=F, K=K, T=T, alpha=a, beta=b, rho=r, nu=n, shift=shift)
+                    out["shifted"].append({
+                        **row,
+                        "lognormal": ql.shiftedSabrVolatility(K, F, T, a, b, n, r, shift, ql.ShiftedLognormal),
+                        "normal": ql.shiftedSabrVolatility(K, F, T, a, b, n, r, shift, ql.Normal),
+                    })
+
+for p in PARAM_SETS + [dict(alpha=0.3, beta=0.9, rho=0.9, nu=0.5), dict(alpha=0.05, beta=0.0, rho=-0.95, nu=1.5)]:
+    a, b, r, n = p["alpha"], p["beta"], p["rho"], p["nu"]
+    for F in [0.03, 1.0, 100.0]:
+        for eps in [1e-13, 1e-11, 1e-9, 1e-7, 1e-5]:
+            for K in [F * (1 - eps), F * (1 + eps)]:
+                aa = a * F ** (1 - b)  # keep the vol level O(a)
+                out["near_atm"].append(dict(
+                    F=F, K=K, T=10.0, alpha=aa, beta=b, rho=r, nu=n,
+                    lognormal=float(hagan_ln(F, K, 10.0, aa, b, r, n)),
+                    normal=float(hagan_n(F, K, 10.0, aa, b, r, n)),
+                    obloj=float(obloj(F, K, 10.0, aa, b, r, n)),
+                ))
+
+out["_meta"] = {
+    "generator": "test/generate-fixtures.py",
+    "QuantLib": ql.__version__,
+    "mpmath": mp.__version__,
+}
 with open("test/fixtures.json", "w") as f:
-    json.dump({"lognormal": lognormal, "normal": normal, "obloj": obloj}, f)
-print(f"lognormal={len(lognormal)} (QuantLib) normal={len(normal)} obloj={len(obloj)}")
-print("sample ATM lognormal:", round(lognormal[3]["vol"], 8) if len(lognormal) > 3 else None)
+    json.dump(out, f)
+print({k: len(v) for k, v in out.items() if k != "_meta"})

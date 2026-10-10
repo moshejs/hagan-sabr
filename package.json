@@ -1,7 +1,7 @@
 {
   "name": "hagan-sabr",
   "version": "1.0.0",
-  "description": "The SABR stochastic-volatility model — Hagan (2002) lognormal & normal implied-vol expansions, the Obłój correction, and (alpha, rho, nu) smile calibration. Matches QuantLib. Zero dependencies.",
+  "description": "The SABR stochastic-volatility model — Hagan (2002) lognormal & normal implied-vol expansions, shifted SABR for negative rates, the Obłój correction, and (alpha, rho, nu) smile calibration. Matches QuantLib. Zero dependencies.",
   "keywords": [
     "sabr",
     "hagan",
@@ -29,10 +29,16 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
-    }
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"
